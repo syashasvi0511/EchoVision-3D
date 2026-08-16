@@ -1,0 +1,1844 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EchoVision — Spatial Audio Obstacle Detector</title>
+<style>
+  :root{
+    --bg: #080a10;
+    --bg-panel: #0e1219;
+    --bg-panel-raised: #121722;
+    --line: #1c2430;
+    --sonar: #3ee888;
+    --sonar-dim: #1f5c3d;
+    --copper: #ff9d5c;
+    --copper-dim: #6b4526;
+    --warn: #ffb020;
+    --danger: #ff5c5c;
+    --cyan: #5ec8d8;
+    --text: #eef2f6;
+    --text-dim: #7c8798;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, "Inter", "Segoe UI", Roboto, sans-serif;
+    --display: "Georgia", "Iowan Old Style", "Palatino Linotype", serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--sans);}
+  body{
+    min-height:100vh;
+    padding:28px 20px 60px;
+    background:
+      repeating-linear-gradient(180deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 3px),
+      radial-gradient(ellipse at 50% -10%, rgba(62,232,136,0.07), transparent 55%),
+      radial-gradient(ellipse at 85% 15%, rgba(255,157,92,0.05), transparent 45%),
+      var(--bg);
+  }
+  .wrap{max-width:1180px;margin:0 auto;position:relative;}
+
+  header{margin-bottom:22px;position:relative;padding:8px 0 0;}
+  .sweep-decoration{
+    position:absolute;top:-40px;right:-20px;width:220px;height:220px;
+    pointer-events:none;opacity:0.5;
+    -webkit-mask-image:radial-gradient(circle, black 40%, transparent 72%);
+    mask-image:radial-gradient(circle, black 40%, transparent 72%);
+  }
+  .sweep-decoration .ring{
+    position:absolute;border-radius:50%;border:1px solid rgba(62,232,136,0.16);
+  }
+  .sweep-decoration .ring:nth-child(1){inset:20px;}
+  .sweep-decoration .ring:nth-child(2){inset:55px;}
+  .sweep-decoration .ring:nth-child(3){inset:90px;}
+  .sweep-decoration .sweep-arm{
+    position:absolute;inset:0;border-radius:50%;
+    background:conic-gradient(from 0deg, rgba(62,232,136,0.5), transparent 26%);
+    animation:sweep-rotate 4s linear infinite;
+  }
+  @keyframes sweep-rotate{to{transform:rotate(360deg);}}
+  @media (prefers-reduced-motion: reduce){
+    .sweep-decoration .sweep-arm{animation:none;}
+    .eyebrow .dot{animation:none;}
+  }
+
+  .eyebrow{
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:0.18em;
+    text-transform:uppercase;
+    color:var(--copper);
+    display:flex;align-items:center;gap:8px;
+  }
+  .eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--sonar);box-shadow:0 0 8px var(--sonar);animation:pulse 2s infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.35;}}
+
+  .eq-icon{display:inline-flex;align-items:flex-end;gap:2px;height:14px;vertical-align:middle;}
+  .eq-icon span{width:3px;background:currentColor;border-radius:1px;animation:eq-bounce 0.9s ease-in-out infinite;}
+  .eq-icon span:nth-child(1){animation-delay:0s;}
+  .eq-icon span:nth-child(2){animation-delay:0.2s;}
+  .eq-icon span:nth-child(3){animation-delay:0.4s;}
+  @keyframes eq-bounce{
+    0%,100%{height:4px;}
+    50%{height:14px;}
+  }
+
+  @keyframes idle-pulse{
+    0%,100%{box-shadow:0 0 0 0 rgba(62,232,136,0.28);}
+    50%{box-shadow:0 0 0 8px rgba(62,232,136,0);}
+  }
+  #startBtn:not(:disabled){animation:idle-pulse 2.4s ease-in-out infinite;}
+  #startBtn:hover{animation:none;}
+  @media (prefers-reduced-motion: reduce){
+    #startBtn:not(:disabled){animation:none;}
+    .eq-icon span{animation:none;height:9px;}
+  }
+  h1{
+    font-family:var(--display);
+    font-weight:500;
+    font-size:clamp(30px,4vw,42px);
+    letter-spacing:-0.01em;
+    margin:8px 0 10px;
+  }
+  h1 span{color:var(--sonar);font-style:italic;}
+  .sub{color:var(--text-dim);font-size:14.5px;line-height:1.6;max-width:58ch;}
+
+  .dashboard{display:grid;grid-template-columns:1fr;gap:16px;align-items:start;}
+  @media (min-width:980px){
+    .dashboard{grid-template-columns:1.55fr 1fr;gap:20px;}
+    .dash-side{grid-column:2;}
+    .dash-main{grid-column:1;}
+  }
+  .side-heading{
+    font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;
+    color:var(--text-dim);margin:22px 0 10px;padding-top:2px;
+  }
+  .side-heading:first-child{margin-top:0;}
+
+  .panel{
+    background:var(--bg-panel);
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:20px;
+    margin-bottom:16px;
+  }
+
+  /* ---- SONAR DISPLAY (signature element) ---- */
+  .sonar-panel{padding:0;overflow:hidden;position:relative;}
+  .sonar-head{
+    display:flex;justify-content:space-between;align-items:center;
+    padding:16px 20px 0;
+  }
+  .mode-toggle{display:flex;gap:6px;background:#0a100e;border:1px solid var(--line);border-radius:9px;padding:3px;}
+  .mode-toggle button{
+    font-family:var(--mono);font-size:11px;letter-spacing:0.05em;text-transform:uppercase;
+    background:transparent;border:none;color:var(--text-dim);padding:7px 12px;border-radius:6px;cursor:pointer;
+    transition:all .15s;
+  }
+  .mode-toggle button.active{background:var(--sonar-dim);color:var(--sonar);}
+  .mode-toggle button:hover:not(.active){color:var(--text);}
+
+  #sonarCanvas{display:block;width:100%;height:auto;}
+
+  .readout{
+    font-family:var(--mono);font-size:12px;color:var(--text-dim);
+    padding:12px 20px 18px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px 20px;
+  }
+  .readout b{color:var(--sonar);font-weight:600;}
+  .readout .warn{color:var(--warn);}
+
+  /* ---- CONTROLS ---- */
+  .controls-grid{display:grid;grid-template-columns:1fr;gap:16px;}
+  .field label{
+    display:block;font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:0.06em;
+    color:var(--text-dim);margin-bottom:8px;
+  }
+  .field .val{color:var(--sonar);}
+  input[type=range]{
+    width:100%;accent-color:var(--sonar);height:4px;background:var(--line);
+  }
+  .btn-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;}
+  button.primary{
+    font-family:var(--sans);font-weight:600;font-size:14px;
+    background:var(--sonar);color:#062015;border:none;border-radius:9px;
+    padding:12px 22px;cursor:pointer;transition:transform .1s, box-shadow .15s;
+  }
+  button.primary:hover{box-shadow:0 0 22px rgba(62,232,136,0.35);}
+  button.primary:active{transform:scale(0.98);}
+  button.secondary{
+    font-family:var(--sans);font-weight:500;font-size:13.5px;
+    background:transparent;color:var(--text);border:1px solid var(--line);border-radius:9px;
+    padding:11px 18px;cursor:pointer;transition:border-color .15s, color .15s;
+  }
+  button.secondary:hover{border-color:var(--copper);color:var(--copper);}
+  button:disabled{opacity:0.4;cursor:not-allowed;}
+  button:focus-visible, .mode-toggle button:focus-visible, input:focus-visible{
+    outline:2px solid var(--cyan);outline-offset:2px;
+  }
+  #voiceToggle:checked ~ #voiceToggleTrack{background:var(--sonar-dim);}
+  #voiceToggle:checked ~ #voiceToggleThumb{transform:translateX(18px);background:var(--sonar);}
+  #voiceToggle:focus-visible ~ #voiceToggleTrack{outline:2px solid var(--cyan);outline-offset:2px;}
+  #hapticToggle:checked ~ #hapticToggleTrack{background:var(--sonar-dim);}
+  #hapticToggle:checked ~ #hapticToggleThumb{transform:translateX(18px);background:var(--sonar);}
+  #hapticToggle:focus-visible ~ #hapticToggleTrack{outline:2px solid var(--cyan);outline-offset:2px;}
+  #objectVoicesToggle:checked ~ #objectVoicesTrack{background:var(--sonar-dim);}
+  #objectVoicesToggle:checked ~ #objectVoicesThumb{transform:translateX(18px);background:var(--sonar);}
+  #objectVoicesToggle:focus-visible ~ #objectVoicesTrack{outline:2px solid var(--cyan);outline-offset:2px;}
+  #aiToggle:checked ~ #aiToggleTrack{background:var(--sonar-dim);}
+  #aiToggle:checked ~ #aiToggleThumb{transform:translateX(18px);background:var(--sonar);}
+  #aiToggle:focus-visible ~ #aiToggleTrack{outline:2px solid var(--cyan);outline-offset:2px;}
+  #voiceControlBtn[aria-pressed="true"]{background:var(--sonar-dim);border-color:var(--sonar);color:var(--sonar);}
+  #logList::-webkit-scrollbar{width:6px;}
+  #logList::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px;}
+  .log-entry{display:flex;justify-content:space-between;gap:10px;padding:6px 8px;background:#0a100e;border-left:3px solid var(--danger);border-radius:4px;}
+  .log-entry .log-time{color:var(--text-dim);flex-shrink:0;}
+
+  /* ---- Movement pad ---- */
+  .pad-section{display:flex;align-items:center;gap:22px;flex-wrap:wrap;}
+  .pad{display:grid;grid-template-columns:repeat(3,44px);grid-template-rows:repeat(2,44px);gap:6px;}
+  .pad button{
+    background:#0a100e;border:1px solid var(--line);color:var(--sonar);
+    border-radius:8px;font-family:var(--mono);font-size:16px;cursor:pointer;
+  }
+  .pad button:hover{border-color:var(--sonar-dim);background:#0f1a16;}
+  .pad button:active{background:var(--sonar-dim);}
+  .pad .fwd{grid-column:2;grid-row:1;}
+  .pad .left{grid-column:1;grid-row:2;}
+  .pad .back{grid-column:2;grid-row:2;}
+  .pad .right{grid-column:3;grid-row:2;}
+  .kbd-hint{font-family:var(--mono);font-size:12px;color:var(--text-dim);line-height:1.7;}
+  .kbd-hint kbd{background:#0a100e;border:1px solid var(--line);border-radius:4px;padding:1px 6px;color:var(--text);}
+
+  /* ---- Legend ---- */
+  .legend{display:flex;gap:22px;flex-wrap:wrap;font-size:13px;color:var(--text-dim);}
+  .legend .item{display:flex;align-items:center;gap:8px;}
+  .swatch{width:10px;height:10px;border-radius:50%;}
+
+  /* ---- Camera mode ---- */
+  .cam-note{
+    font-size:12.5px;color:var(--warn);background:rgba(255,176,32,0.08);
+    border:1px solid rgba(255,176,32,0.25);border-radius:8px;padding:10px 12px;margin-bottom:14px;line-height:1.5;
+  }
+  video{display:none;}
+
+  .sr-only{
+    position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+    clip:rect(0,0,0,0);white-space:nowrap;border:0;
+  }
+  .skip-link{
+    position:absolute;left:-9999px;top:0;z-index:100;
+    background:var(--sonar);color:#062015;font-weight:600;
+    padding:10px 16px;border-radius:0 0 8px 0;text-decoration:none;
+  }
+  .skip-link:focus{left:0;}
+
+  footer{margin-top:26px;color:var(--text-dim);font-size:12.5px;line-height:1.6;}
+  footer a{color:var(--cyan);}
+</style>
+</head>
+<body>
+<a href="#startPanel" class="skip-link">Skip to controls</a>
+<div class="wrap">
+
+  <header>
+    <div class="sweep-decoration" aria-hidden="true">
+      <div class="ring"></div><div class="ring"></div><div class="ring"></div>
+      <div class="sweep-arm"></div>
+    </div>
+    <div class="eyebrow"><span class="dot"></span> LIVE PROTOTYPE</div>
+    <h1><span>EchoVision</span> — spatial audio obstacle detector</h1>
+    <p class="sub">Turns nearby obstacles into directional sound. Angle becomes stereo position, distance becomes loudness and pulse rate, and height becomes pitch — so proximity can be understood by ear alone, without looking at anything.</p>
+  </header>
+
+  <div class="dashboard">
+  <div class="dash-main">
+
+  <section class="panel" id="voiceGuidePanel" style="text-align:center;">
+    <button class="primary" id="voiceGuideBtn" style="width:100%;font-size:15px;padding:16px;display:flex;align-items:center;justify-content:center;gap:10px;">
+      <span aria-hidden="true">🔊</span> What can I do here? (Voice guide)
+    </button>
+    <p style="font-size:12px;color:var(--text-dim);margin:10px 0 0;">Speaks a full orientation: how to start, what modes exist, and every command available — press it anytime.</p>
+  </section>
+
+  <section class="panel" id="backendConnectionPanel">
+    <label for="backendUrlInput" style="font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-dim);display:block;margin-bottom:10px;">
+      Backend Server (for Camera mode)
+    </label>
+    <div style="display:flex;gap:8px;">
+      <input type="text" id="backendUrlInput" value="" placeholder="Paste your ngrok link here, e.g. https://abcd-1234.ngrok-free.app"
+        style="flex:1;background:#0a100e;border:1px solid var(--line);border-radius:8px;color:var(--text);
+               font-family:var(--mono);font-size:12.5px;padding:9px 10px;">
+      <button class="secondary" id="reconnectBtn" style="padding:9px 16px;white-space:nowrap;">Connect</button>
+    </div>
+    <p id="backendConnectionStatus" role="status" aria-live="polite" style="font-size:12px;color:var(--text-dim);margin:10px 0 0;">
+      Defaults to this page's own address. Running the backend elsewhere (e.g. via ngrok)? Paste the https:// link ngrok gives you — no need to edit it into a WebSocket URL, that's handled automatically.
+    </p>
+  </section>
+
+  <section class="panel sonar-panel">
+    <div class="sonar-head">
+      <div class="mode-toggle" role="tablist" aria-label="Detection mode">
+        <button id="modeSimBtn" class="active" role="tab" aria-selected="true">Simulation</button>
+        <button id="modeCamBtn" role="tab" aria-selected="false">Camera (experimental)</button>
+      </div>
+      <div class="legend" style="font-family:var(--mono);font-size:11px;">
+        <div class="item"><span class="swatch" style="background:var(--sonar)"></span>clear</div>
+        <div class="item"><span class="swatch" style="background:var(--warn)"></span>near</div>
+        <div class="item"><span class="swatch" style="background:var(--danger)"></span>close</div>
+      </div>
+    </div>
+    <canvas id="sonarCanvas" width="880" height="440" role="img" aria-label="Sonar display showing detected obstacles relative to the user"></canvas>
+    <div id="camViewWrap" style="display:none;position:relative;width:100%;aspect-ratio:16/9;background:#000;overflow:hidden;">
+      <video id="camVideoDisplay" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;display:block;"></video>
+      <canvas id="boxOverlayCanvas" width="320" height="180" style="position:absolute;top:0;left:0;width:100%;height:100%;"></canvas>
+      <div id="camBadge" style="position:absolute;top:10px;left:10px;font-family:var(--mono);font-size:11px;
+           background:rgba(7,11,10,0.75);border:1px solid var(--line);border-radius:6px;padding:4px 9px;color:var(--text-dim);">
+        0 objects detected
+      </div>
+    </div>
+    <div class="readout" id="readout">
+      <span>Press <b>Start</b> to begin</span>
+    </div>
+    <div aria-live="polite" class="sr-only" id="srAnnounce"></div>
+  </section>
+
+  <section class="panel" id="startPanel">
+    <div class="btn-row">
+      <button class="primary" id="startBtn">Start demo (enables audio)</button>
+      <button class="secondary" id="stopBtn" disabled>Stop</button>
+      <button class="secondary" id="regenBtn">New obstacle layout</button>
+    </div>
+  </section>
+
+  <section class="panel" id="camNotePanel" style="display:none;">
+    <div class="cam-note" id="camNoteText" role="status" aria-live="polite">
+      Connecting to backend…
+    </div>
+    <div class="field" style="margin-top:12px;">
+      <button class="secondary" id="recalibrateBtn" style="padding:9px 16px;">Recalibrate</button>
+      <p style="font-size:12px;color:var(--text-dim);margin:8px 0 0;">
+        Point the camera at a normal, obstacle-free view and press Recalibrate if you're getting false alarms — the detector learns your background first, then only flags things that appear or get closer than that.
+      </p>
+    </div>
+    <div class="field" id="aiTogglePanel" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--line);align-items:center;justify-content:space-between;gap:12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <div>
+          <p style="margin:0 0 2px;font-weight:600;">🧠 AI object identification</p>
+          <p style="font-size:11.5px;color:var(--text-dim);margin:0;" id="aiToggleHint">
+            Real object detection (COCO-trained) — names what's around you (person, chair, backpack, ...) instead of just flagging proximity.
+          </p>
+        </div>
+        <label style="position:relative;display:inline-block;width:42px;height:24px;flex-shrink:0;">
+          <input type="checkbox" id="aiToggle" aria-label="AI object identification" style="opacity:0;width:0;height:0;">
+          <span id="aiToggleTrack" style="position:absolute;inset:0;background:#1c2825;border-radius:12px;transition:.15s;cursor:pointer;"></span>
+          <span id="aiToggleThumb" style="position:absolute;left:3px;top:3px;width:18px;height:18px;background:#7d968b;border-radius:50%;transition:.15s;pointer-events:none;"></span>
+        </label>
+      </div>
+    </div>
+    <div class="field" id="describeScenePanel" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--line);">
+      <button class="secondary" id="describeSceneBtn" style="width:100%;">🗣️ Describe what's around me</button>
+      <p id="describeSceneResult" role="status" aria-live="polite" style="font-size:13px;color:var(--text);margin:10px 0 0;line-height:1.5;"></p>
+    </div>
+  </section>
+
+  </div>
+  <div class="dash-side">
+  <p class="side-heading">Detection Settings</p>
+
+  <section class="panel controls-grid">
+    <div class="field">
+      <label for="densitySlider">Obstacle density <span class="val" id="densityVal">10</span></label>
+      <input type="range" id="densitySlider" min="3" max="20" value="10">
+    </div>
+    <div class="field">
+      <label for="rangeSlider">Detection range <span class="val" id="rangeVal">7 m</span></label>
+      <input type="range" id="rangeSlider" min="3" max="12" value="7">
+    </div>
+    <div class="field">
+      <label for="volSlider">Master volume <span class="val" id="volVal">80%</span></label>
+      <input type="range" id="volSlider" min="0" max="100" value="80">
+    </div>
+    <div class="field">
+      <label for="zonesSlider">Zones <span class="val" id="zonesVal">7</span></label>
+      <input type="range" id="zonesSlider" min="3" max="11" step="2" value="7">
+    </div>
+    <div class="field">
+      <label for="sensSlider">Camera sensitivity <span class="val" id="sensVal">50%</span></label>
+      <input type="range" id="sensSlider" min="0" max="100" value="50">
+    </div>
+    <div class="field" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+      <div>
+        <label style="margin-bottom:2px;">Voice announcements</label>
+        <p style="font-size:11.5px;color:var(--text-dim);margin:0;">Speaks up when something gets close, and when the path clears.</p>
+      </div>
+      <label style="position:relative;display:inline-block;width:42px;height:24px;flex-shrink:0;">
+        <input type="checkbox" id="voiceToggle" aria-label="Voice announcements" style="opacity:0;width:0;height:0;">
+        <span id="voiceToggleTrack" style="position:absolute;inset:0;background:#1c2825;border-radius:12px;transition:.15s;cursor:pointer;"></span>
+        <span id="voiceToggleThumb" style="position:absolute;left:3px;top:3px;width:18px;height:18px;background:#7d968b;border-radius:50%;transition:.15s;pointer-events:none;"></span>
+      </label>
+    </div>
+    <div class="field">
+      <button class="secondary" id="announceNowBtn" style="width:100%;">🔊 Announce current surroundings</button>
+    </div>
+  </section>
+
+  <section class="panel" id="logPanel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <label style="font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-dim);">Alert Log — close-proximity events</label>
+      <button class="secondary" id="clearLogBtn" aria-label="Clear alert log" style="padding:6px 12px;font-size:12px;">Clear</button>
+    </div>
+    <div id="logList" style="font-family:var(--mono);font-size:12.5px;color:var(--text-dim);display:flex;flex-direction:column;gap:6px;max-height:180px;overflow-y:auto;">
+      <span style="color:var(--text-dim);opacity:0.6;">No events yet — alerts appear here when something gets close.</span>
+    </div>
+  </section>
+
+  <section class="panel" id="advancedAudioPanel">
+    <label style="font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-dim);display:block;margin-bottom:14px;">Advanced Audio</label>
+    <div class="field" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+      <div>
+        <p style="margin:0 0 2px;font-weight:600;">🎵 Object voices (Doppler)</p>
+        <p style="font-size:11.5px;color:var(--text-dim);margin:0;">
+          Each tracked object gets its own moving tone that follows it precisely and shifts pitch based on closing speed — replaces the fixed left-right zone pulses with per-object audio identity. Needs the camera backend connected.
+        </p>
+      </div>
+      <label style="position:relative;display:inline-block;width:42px;height:24px;flex-shrink:0;">
+        <input type="checkbox" id="objectVoicesToggle" aria-label="Object voices with Doppler pitch shift" style="opacity:0;width:0;height:0;">
+        <span id="objectVoicesTrack" style="position:absolute;inset:0;background:#1c2825;border-radius:12px;transition:.15s;cursor:pointer;"></span>
+        <span id="objectVoicesThumb" style="position:absolute;left:3px;top:3px;width:18px;height:18px;background:#7d968b;border-radius:50%;transition:.15s;pointer-events:none;"></span>
+      </label>
+    </div>
+  </section>
+
+  <section class="panel" id="accessibilityPanel">
+    <label style="font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-dim);display:block;margin-bottom:14px;">Accessibility</label>
+
+    <div class="field" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
+      <div>
+        <p style="margin:0 0 2px;font-weight:600;">🎙️ Voice control</p>
+        <p style="font-size:11.5px;color:var(--text-dim);margin:0;" id="voiceControlHint">
+          Hands-free operation — say "start", "stop", "camera mode", "simulation mode", "recalibrate", "what's ahead", "describe what you see", "louder", "quieter", "mute", "guide", or "help".
+        </p>
+      </div>
+      <button class="secondary" id="voiceControlBtn" style="padding:9px 16px;white-space:nowrap;" aria-pressed="false">
+        Turn on
+      </button>
+    </div>
+
+    <div class="field" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+      <div>
+        <p style="margin:0 0 2px;font-weight:600;">📳 Haptic feedback</p>
+        <p style="font-size:11.5px;color:var(--text-dim);margin:0;" id="hapticHint">Vibrates on close obstacles (mobile devices with vibration support only).</p>
+      </div>
+      <label style="position:relative;display:inline-block;width:42px;height:24px;flex-shrink:0;">
+        <input type="checkbox" id="hapticToggle" aria-label="Haptic feedback" style="opacity:0;width:0;height:0;">
+        <span id="hapticToggleTrack" style="position:absolute;inset:0;background:#1c2825;border-radius:12px;transition:.15s;cursor:pointer;"></span>
+        <span id="hapticToggleThumb" style="position:absolute;left:3px;top:3px;width:18px;height:18px;background:#7d968b;border-radius:50%;transition:.15s;pointer-events:none;"></span>
+      </label>
+    </div>
+
+    <p id="voiceControlStatus" role="status" aria-live="polite" style="font-family:var(--mono);font-size:12px;color:var(--cyan);margin:14px 0 0;min-height:16px;"></p>
+  </section>
+
+  </div>
+  </div>
+
+  <section class="panel pad-section">
+    <div class="pad" aria-label="Movement controls">
+      <button class="fwd" id="padFwd" aria-label="Move forward">▲</button>
+      <button class="left" id="padLeft" aria-label="Turn left">◀</button>
+      <button class="back" id="padBack" aria-label="Move backward">▼</button>
+      <button class="right" id="padRight" aria-label="Turn right">▶</button>
+    </div>
+    <div class="kbd-hint">
+      Move: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrow keys<br>
+      The blue wedge on the sonar display is your facing direction — obstacles ahead of you sound in front, obstacles to your side pan to that ear.
+    </div>
+  </section>
+
+  <footer>
+    Sonification scheme: <b style="color:var(--text)">pan</b> = horizontal angle · <b style="color:var(--text)">volume + pulse rate</b> = distance · <b style="color:var(--text)">pitch</b> = height (low tone = ground-level obstacle, high tone = head-height). Silence means the path ahead is clear. Rendered with the Web Audio API's HRTF panning model for true directional cues over headphones.
+  </footer>
+
+</div>
+
+<canvas id="camProcessCanvas" width="64" height="36" style="display:none;"></canvas>
+
+<script>
+(() => {
+  'use strict';
+
+  // ---------- CONFIG ----------
+  let NUM_ZONES = 7;
+  let MAX_RANGE = 7;       // meters
+  let OBSTACLE_COUNT = 10;
+  let masterVol = 0.8;
+  let CAM_SENSITIVITY = 0.5; // 0..1, also sent to backend
+  const WORLD_SIZE = 16;   // meters, square world for simulation
+  const FOV_DEG = 150;     // total field of view swept by zones
+
+  // ---------- STATE ----------
+  let running = false;
+  let mode = 'sim'; // 'sim' | 'cam'
+  let audioCtx = null;
+  let masterGain = null;
+  let zoneChains = []; // {osc, gain, panner, nextPulseTime, height}
+  let objectVoices = new Map(); // track_id -> {osc, gain, panner, nextPulseTime, missed}
+  let objectVoicesEnabled = false;
+  let player = { x: 0, z: 0, facing: 0 }; // facing: radians, 0 = +z (north)
+  let obstacles = []; // {x,z,r,height} height: 'ground'|'mid'|'head'
+  let keys = {};
+  let rafId = null;
+  let lastFrameT = 0;
+  let zoneDistances = []; // current nearest distance per zone (or null)
+  let lastAnnounce = 0;
+
+  // Camera mode state
+  let camStream = null;
+  let camVideo = document.getElementById('camVideoDisplay');
+  let procCanvas = document.getElementById('camProcessCanvas');
+  let procCtx = procCanvas.getContext('2d', { willReadFrequently: true });
+
+  // Backend connection state
+  let backendSocket = null;
+  let backendConnected = false;
+  let backendAttempted = false;
+  let latestBackendZones = null;
+  let latestBoxes = [];
+  let backendCalibrating = false;
+  let aiAvailable = false;
+  let aiEnabled = false;
+  let describeSceneAvailable = false;
+  let describeScenePending = false;
+  let frameSendInterval = null;
+  const sendCanvas = document.createElement('canvas');
+  sendCanvas.width = 320; sendCanvas.height = 180;
+  const sendCtx = sendCanvas.getContext('2d');
+  // Separate, higher-res canvas for on-demand scene descriptions — this
+  // is a one-off request (not part of the continuous ~10fps stream), so
+  // image quality matters more than speed here.
+  const describeCanvas = document.createElement('canvas');
+  describeCanvas.width = 960; describeCanvas.height = 540;
+  const describeCtx = describeCanvas.getContext('2d');
+
+  // ---------- DOM ----------
+  const sonarCanvas = document.getElementById('sonarCanvas');
+  const sctx = sonarCanvas.getContext('2d');
+  const camViewWrap = document.getElementById('camViewWrap');
+  const boxOverlayCanvas = document.getElementById('boxOverlayCanvas');
+  const boxCtx = boxOverlayCanvas.getContext('2d');
+  const camBadge = document.getElementById('camBadge');
+  const readout = document.getElementById('readout');
+  const srAnnounce = document.getElementById('srAnnounce');
+  const voiceGuideBtn = document.getElementById('voiceGuideBtn');
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const regenBtn = document.getElementById('regenBtn');
+  const modeSimBtn = document.getElementById('modeSimBtn');
+  const modeCamBtn = document.getElementById('modeCamBtn');
+  const camNotePanel = document.getElementById('camNotePanel');
+  const camNoteText = document.getElementById('camNoteText');
+  const backendUrlInput = document.getElementById('backendUrlInput');
+  const backendConnectionStatus = document.getElementById('backendConnectionStatus');
+  const reconnectBtn = document.getElementById('reconnectBtn');
+  const recalibrateBtn = document.getElementById('recalibrateBtn');
+  const aiTogglePanel = document.getElementById('aiTogglePanel');
+  const aiToggle = document.getElementById('aiToggle');
+  const aiToggleHint = document.getElementById('aiToggleHint');
+  const describeScenePanel = document.getElementById('describeScenePanel');
+  const describeSceneBtn = document.getElementById('describeSceneBtn');
+  const describeSceneResult = document.getElementById('describeSceneResult');
+  const sensSlider = document.getElementById('sensSlider');
+  const sensVal = document.getElementById('sensVal');
+  const voiceToggle = document.getElementById('voiceToggle');
+  const announceNowBtn = document.getElementById('announceNowBtn');
+  const logList = document.getElementById('logList');
+  const clearLogBtn = document.getElementById('clearLogBtn');
+  const voiceControlBtn = document.getElementById('voiceControlBtn');
+  const voiceControlStatus = document.getElementById('voiceControlStatus');
+  const voiceControlHint = document.getElementById('voiceControlHint');
+  const hapticToggle = document.getElementById('hapticToggle');
+  const objectVoicesToggle = document.getElementById('objectVoicesToggle');
+  const hapticHint = document.getElementById('hapticHint');
+  const densitySlider = document.getElementById('densitySlider');
+  const rangeSlider = document.getElementById('rangeSlider');
+  const volSlider = document.getElementById('volSlider');
+  const zonesSlider = document.getElementById('zonesSlider');
+  const densityVal = document.getElementById('densityVal');
+  const rangeVal = document.getElementById('rangeVal');
+  const volVal = document.getElementById('volVal');
+  const zonesVal = document.getElementById('zonesVal');
+
+  // ---------- CORE CONTROLS (wired first, deliberately, before any optional
+  // feature setup below) — Start/Stop/mode-switch must never be blocked by a
+  // failure in an optional feature (voice control, haptics, etc). Function
+  // names referenced here are hoisted `function` declarations defined later
+  // in this file, so this works regardless of source order. ----------
+  modeSimBtn.addEventListener('click', () => setMode('sim'));
+  modeCamBtn.addEventListener('click', () => setMode('cam'));
+
+  startBtn.addEventListener('click', async () => {
+    if (running) return;
+    initAudio();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+    generateObstacles();
+    player = { x: 0, z: 0, facing: 0 };
+    running = true;
+    lastFrameT = performance.now();
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    rafId = requestAnimationFrame(frame);
+  });
+
+  stopBtn.addEventListener('click', () => {
+    running = false;
+    if (rafId) cancelAnimationFrame(rafId);
+    stopCamera();
+    disconnectBackend();
+    teardownAudio();
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    lastVoiceBucket = 'clear';
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    sctx.clearRect(0, 0, sonarCanvas.width, sonarCanvas.height);
+    readout.innerHTML = `<span>Stopped. Press <b>Start</b> to begin again.</span>`;
+  });
+
+  // ---------- OBSTACLE GENERATION (simulation) ----------
+  function generateObstacles() {
+    obstacles = [];
+    for (let i = 0; i < OBSTACLE_COUNT; i++) {
+      const heights = ['ground', 'mid', 'head'];
+      obstacles.push({
+        x: (Math.random() - 0.5) * WORLD_SIZE,
+        z: (Math.random() - 0.5) * WORLD_SIZE,
+        r: 0.25 + Math.random() * 0.5,
+        height: heights[Math.floor(Math.random() * heights.length)]
+      });
+    }
+  }
+
+  // ---------- AUDIO ENGINE ----------
+  function heightToFreq(h) {
+    if (h === 'ground') return 190;
+    if (h === 'mid') return 420;
+    return 820; // head
+  }
+
+  function initAudio() {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    masterGain = audioCtx.createGain();
+    masterGain.gain.value = masterVol;
+    masterGain.connect(audioCtx.destination);
+
+    // listener setup
+    if (audioCtx.listener.forwardX) {
+      audioCtx.listener.forwardX.value = 0;
+      audioCtx.listener.forwardY.value = 0;
+      audioCtx.listener.forwardZ.value = -1;
+      audioCtx.listener.upX.value = 0;
+      audioCtx.listener.upY.value = 1;
+      audioCtx.listener.upZ.value = 0;
+    }
+
+    zoneChains = [];
+    for (let i = 0; i < NUM_ZONES; i++) {
+      zoneChains.push(makeAudioChain());
+    }
+  }
+
+  function teardownAudio() {
+    if (!audioCtx) return;
+    zoneChains.forEach(z => {
+      try { z.osc.stop(); } catch (e) {}
+    });
+    objectVoices.forEach(v => { try { v.osc.stop(); } catch (e) {} });
+    objectVoices.clear();
+    audioCtx.close();
+    audioCtx = null;
+    zoneChains = [];
+  }
+
+  function pulseZone(chain, distance, freq) {
+    const now = audioCtx.currentTime;
+    if (now < chain.nextPulseTime) return;
+    const t = Math.min(distance / MAX_RANGE, 1);
+    const peakGain = (1 - t) * 0.85 + 0.05;
+    const pulseDur = 0.06 + t * 0.05;
+    const interval = 0.12 + t * 0.75; // closer = faster pulses
+
+    chain.osc.frequency.setTargetAtTime(freq, now, 0.02);
+    chain.gain.gain.cancelScheduledValues(now);
+    chain.gain.gain.setValueAtTime(0, now);
+    chain.gain.gain.linearRampToValueAtTime(peakGain, now + 0.008);
+    chain.gain.gain.linearRampToValueAtTime(0, now + pulseDur);
+    chain.nextPulseTime = now + interval;
+  }
+
+  function silenceZone(chain) {
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+    chain.gain.gain.cancelScheduledValues(now);
+    chain.gain.gain.setTargetAtTime(0, now, 0.05);
+    chain.nextPulseTime = now + 0.15;
+  }
+
+  // ---------- SIMULATION SENSING ----------
+  function senseZonesSimulation() {
+    const halfFov = (FOV_DEG * Math.PI / 180) / 2;
+    const zoneWidth = (FOV_DEG * Math.PI / 180) / NUM_ZONES;
+    const results = new Array(NUM_ZONES).fill(null);
+
+    obstacles.forEach(ob => {
+      const dx = ob.x - player.x;
+      const dz = ob.z - player.z;
+      const dist = Math.sqrt(dx * dx + dz * dz) - ob.r;
+      if (dist > MAX_RANGE || dist < 0) return;
+      let angle = Math.atan2(dx, dz) - player.facing; // relative angle, 0 = straight ahead
+      // normalize to [-PI, PI]
+      angle = Math.atan2(Math.sin(angle), Math.cos(angle));
+      if (Math.abs(angle) > halfFov) return;
+
+      const zoneIdx = Math.min(
+        NUM_ZONES - 1,
+        Math.floor((angle + halfFov) / zoneWidth)
+      );
+      if (results[zoneIdx] === null || dist < results[zoneIdx].dist) {
+        results[zoneIdx] = { dist, height: ob.height, angle };
+      }
+    });
+    return results;
+  }
+
+  // ---------- CAMERA SENSING (heuristic) ----------
+  async function startCamera() {
+    camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    camVideo.srcObject = camStream;
+    await camVideo.play();
+  }
+
+  function stopCamera() {
+    if (camStream) {
+      camStream.getTracks().forEach(t => t.stop());
+      camStream = null;
+    }
+  }
+
+  // ---------- BACKEND CONNECTION ----------
+  // Accepts whatever someone pastes — an ngrok https:// link, a bare
+  // host, or an already-correct ws:// URL — and normalizes it to a
+  // proper WebSocket URL pointing at /ws/obstacles. This means someone
+  // can copy ngrok's printed URL directly with no manual editing.
+  function normalizeBackendUrl(raw) {
+    let s = (raw || '').trim();
+    if (!s) {
+      if (location.protocol === 'file:' || !location.host) return 'ws://localhost:8000/ws/obstacles';
+      const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+      return `${scheme}://${location.host}/ws/obstacles`;
+    }
+    if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(s)) {
+      s = 'https://' + s; // no scheme given — assume https, the common case for ngrok links
+    }
+    let url;
+    try {
+      url = new URL(s);
+    } catch (e) {
+      return s; // let WebSocket() itself surface a clear error for anything unparseable
+    }
+    if (url.protocol === 'http:') url.protocol = 'ws:';
+    else if (url.protocol === 'https:') url.protocol = 'wss:';
+    if (!url.pathname || url.pathname === '/') {
+      url.pathname = '/ws/obstacles';
+    }
+    return url.toString();
+  }
+
+  function connectBackend() {
+    const url = normalizeBackendUrl(backendUrlInput.value);
+    backendAttempted = true;
+    backendConnected = false;
+    updateCamNote('connecting', url);
+
+    try {
+      backendSocket = new WebSocket(url);
+    } catch (e) {
+      updateCamNote('failed');
+      return;
+    }
+
+    const connectTimeout = setTimeout(() => {
+      if (!backendConnected) {
+        updateCamNote('failed');
+        try { backendSocket.close(); } catch (e) {}
+      }
+    }, 3000);
+
+    backendSocket.onopen = () => {
+      clearTimeout(connectTimeout);
+      backendConnected = true;
+      backendCalibrating = true;
+      updateCamNote('calibrating');
+      sendBackendConfig();
+      startFrameSending();
+    };
+    backendSocket.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === 'capabilities') {
+          aiAvailable = !!msg.ai_available;
+          aiTogglePanel.style.display = aiAvailable ? 'flex' : 'none';
+          if (!aiAvailable) {
+            aiToggleHint.textContent = 'Not available on this backend — run pip install ultralytics on the server to enable real object identification.';
+          }
+          describeSceneAvailable = !!msg.describe_scene_available;
+          describeScenePanel.style.display = describeSceneAvailable ? 'block' : 'none';
+          return;
+        }
+        if (msg.type === 'scene_description') {
+          describeScenePending = false;
+          describeSceneBtn.disabled = false;
+          describeSceneBtn.textContent = '🗣️ Describe what\'s around me';
+          if (msg.ok) {
+            describeSceneResult.textContent = msg.description;
+            speak(msg.description);
+          } else {
+            describeSceneResult.textContent = `Couldn't describe the scene: ${msg.error}`;
+          }
+          return;
+        }
+        if (msg.type === 'zones') {
+          latestBackendZones = msg.zones.map(z => z ? { dist: z.dist, height: z.height, angle: 0 } : null);
+          latestBoxes = msg.boxes || [];
+          const wasCalibrating = backendCalibrating;
+          backendCalibrating = !!msg.calibrating;
+          if (wasCalibrating && !backendCalibrating) updateCamNote('connected');
+          else if (backendCalibrating) updateCamNote('calibrating');
+        }
+      } catch (e) {}
+    };
+    backendSocket.onerror = () => {
+      clearTimeout(connectTimeout);
+      if (!backendConnected) updateCamNote('failed');
+    };
+    backendSocket.onclose = () => {
+      backendConnected = false;
+      stopFrameSending();
+      if (mode === 'cam') updateCamNote('failed');
+    };
+  }
+
+  function sendBackendConfig() {
+    if (!backendConnected || !backendSocket) return;
+    backendSocket.send(JSON.stringify({
+      type: 'config',
+      num_zones: NUM_ZONES,
+      max_range_m: MAX_RANGE,
+      sensitivity: CAM_SENSITIVITY,
+      use_ai: aiEnabled,
+    }));
+  }
+
+  function disconnectBackend() {
+    stopFrameSending();
+    if (backendSocket) {
+      try { backendSocket.close(); } catch (e) {}
+      backendSocket = null;
+    }
+    backendConnected = false;
+    latestBackendZones = null;
+    latestBoxes = [];
+    aiAvailable = false;
+    aiTogglePanel.style.display = 'none';
+    describeSceneAvailable = false;
+    describeScenePanel.style.display = 'none';
+    if (audioCtx) teardownObjectVoicesIfIdle();
+  }
+
+  function startFrameSending() {
+    stopFrameSending();
+    frameSendInterval = setInterval(() => {
+      if (!backendConnected || !camVideo.videoWidth) return;
+      sendCtx.drawImage(camVideo, 0, 0, sendCanvas.width, sendCanvas.height);
+      const dataUrl = sendCanvas.toDataURL('image/jpeg', 0.6);
+      const b64 = dataUrl.split(',')[1];
+      try {
+        backendSocket.send(JSON.stringify({ type: 'frame', image: b64 }));
+      } catch (e) {}
+    }, 100); // ~10 fps
+  }
+  function stopFrameSending() {
+    if (frameSendInterval) { clearInterval(frameSendInterval); frameSendInterval = null; }
+  }
+
+  function updateCamNote(state, resolvedUrl) {
+    let text, color;
+    if (state === 'connecting') {
+      text = 'Connecting to ' + (resolvedUrl || backendUrlInput.value.trim() || 'backend') + ' …';
+      color = 'var(--warn)';
+    } else if (state === 'calibrating') {
+      text = 'Calibrating — hold the camera on a normal, obstacle-free view for a couple seconds. It\'s learning what "clear" looks like so it stops treating your desk or hands as constant obstacles.';
+      color = 'var(--cyan)';
+    } else if (state === 'connected') {
+      text = 'Calibrated and connected — using real-time optical-flow + edge-density obstacle detection from the Python backend.';
+      color = 'var(--sonar)';
+    } else if (state === 'failed') {
+      text = 'Backend not reachable — check the URL, make sure the backend (and ngrok, if using it) is running, then hit Connect again. Camera mode will fall back to a rougher in-browser heuristic in the meantime.';
+      color = 'var(--warn)';
+    }
+    camNoteText.textContent = text;
+    camNoteText.style.color = color;
+    backendConnectionStatus.textContent = text;
+    backendConnectionStatus.style.color = color;
+  }
+
+  reconnectBtn.addEventListener('click', () => {
+    disconnectBackend();
+    connectBackend();
+  });
+
+  recalibrateBtn.addEventListener('click', () => {
+    if (backendConnected) {
+      backendCalibrating = true;
+      updateCamNote('calibrating');
+      backendSocket.send(JSON.stringify({ type: 'reset' }));
+    } else {
+      // local fallback: re-run its calibration against the current view
+      localCamBaseline = null;
+      localCalibFrameCount = 0;
+    }
+  });
+
+  function requestSceneDescription() {
+    if (!backendConnected || !describeSceneAvailable) return;
+    if (!camVideo.videoWidth) {
+      describeSceneResult.textContent = 'Camera isn\'t active yet.';
+      return;
+    }
+    if (describeScenePending) return; // already waiting on one, don't stack requests
+    describeScenePending = true;
+    describeSceneBtn.disabled = true;
+    describeSceneBtn.textContent = '🗣️ Looking…';
+    describeSceneResult.textContent = '';
+    describeCtx.drawImage(camVideo, 0, 0, describeCanvas.width, describeCanvas.height);
+    const dataUrl = describeCanvas.toDataURL('image/jpeg', 0.85);
+    const b64 = dataUrl.split(',')[1];
+    backendSocket.send(JSON.stringify({ type: 'describe_scene', image: b64 }));
+  }
+
+  describeSceneBtn.addEventListener('click', requestSceneDescription);
+
+  sensSlider.addEventListener('input', () => {
+    CAM_SENSITIVITY = parseInt(sensSlider.value) / 100;
+    sensVal.textContent = sensSlider.value + '%';
+    sendBackendConfig();
+  });
+
+  voiceToggle.addEventListener('change', () => {
+    voiceEnabled = voiceToggle.checked;
+    if (voiceEnabled) speak('Voice announcements on.');
+    else if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  });
+
+  announceNowBtn.addEventListener('click', () => {
+    if (!('speechSynthesis' in window)) {
+      readout.innerHTML = `<span class="warn">Speech synthesis isn't available in this browser.</span>`;
+      return;
+    }
+    const nearest = findNearestZone(zoneDistances || []);
+    const nearestBox = (mode === 'cam' && aiEnabled && latestBoxes.length) ? findNearestBox(latestBoxes) : null;
+    const label = nearestBox && nearestBox.label ? nearestBox.label : null;
+    speak(describeNearest(nearest, label));
+  });
+
+  clearLogBtn.addEventListener('click', () => {
+    alertLog = [];
+    renderLog();
+  });
+
+  // keep relative "Xs ago" timestamps in the log fresh even when nothing new happens
+  setInterval(() => { if (alertLog.length) renderLog(); }, 5000);
+
+  // ---------- HAPTIC FEEDBACK ----------
+  if (!('vibrate' in navigator)) {
+    hapticToggle.disabled = true;
+    hapticHint.textContent = 'Not supported on this device/browser.';
+  } else {
+    hapticToggle.addEventListener('change', () => {
+      hapticEnabled = hapticToggle.checked;
+      if (hapticEnabled) navigator.vibrate(60);
+    });
+  }
+
+  // ---------- OBJECT VOICES TOGGLE ----------
+  objectVoicesToggle.addEventListener('change', () => {
+    objectVoicesEnabled = objectVoicesToggle.checked;
+    if (!objectVoicesEnabled && audioCtx) teardownObjectVoicesIfIdle();
+  });
+
+  // ---------- VOICE COMMAND CONTROL ----------
+  // Voice control (SpeechRecognition) — construction is deliberately
+  // LAZY: the actual `new SpeechRecognitionAPI()` call only happens the
+  // first time the user clicks "Turn on", not automatically at page
+  // load. Speech recognition needs microphone negotiation under the
+  // hood, unlike most Web APIs, and eagerly constructing it for every
+  // visitor (whether or not they ever use voice control) turned out to
+  // be capable of hanging the page on certain systems. This mirrors how
+  // the camera is already only requested on demand, not on page load.
+  const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  // ---------- VOICE GUIDE (on-demand orientation, no setup needed) ----------
+  function buildVoiceGuideMessage() {
+    let msg = "This is EchoVision, a spatial audio obstacle detector. ";
+
+    if (!running) {
+      msg += "Press the green Start button to begin. There are two modes: Simulation, a virtual room you navigate with the arrow keys or the on-screen pad, and Camera mode, which uses your real camera to detect obstacles around you and can use a Python backend for more accurate detection. ";
+    } else {
+      msg += mode === 'sim'
+        ? "You're currently in Simulation mode, navigating a virtual room. "
+        : "You're currently in Camera mode. ";
+      const nearest = findNearestZone(zoneDistances || []);
+      msg += nearest
+        ? `Right now, the nearest obstacle is ${nearest.dist.toFixed(1)} meters ${nearest.direction}. `
+        : "Right now, your path is clear. ";
+    }
+
+    msg += "Angle is heard as stereo position, distance as loudness and pulse speed, and height as pitch. ";
+    if (aiAvailable) {
+      msg += aiEnabled
+        ? "AI object identification is on, so you'll hear what things actually are, like person or chair, not just that something's there. "
+        : "In Camera mode, you can also turn on AI object identification to hear what things actually are, like person or chair. ";
+    }
+    if (describeSceneAvailable) {
+      msg += "You can also ask for a full description of what's around you anytime — say describe, or press the Describe button in Camera mode, for a spoken summary of the whole scene, not just the nearest obstacle. ";
+    }
+    msg += "You can turn on Voice announcements to hear updates automatically, Haptic feedback to feel a vibration when something's close, or Voice control to operate everything hands-free by saying things like start, stop, camera mode, simulation mode, recalibrate, what's ahead, describe what you see, louder, quieter, or mute. ";
+    msg += "Sliders let you adjust obstacle density, detection range, volume, number of zones, and camera sensitivity. There's also an alert log tracking close calls, and this guide button works anytime you need a refresher.";
+    return msg;
+  }
+
+  voiceGuideBtn.addEventListener('click', () => {
+    if (isSpeaking) {
+      window.speechSynthesis.cancel();
+      isSpeaking = false;
+      updateVoiceGuideBtnLabel();
+      return;
+    }
+    speak(buildVoiceGuideMessage());
+  });
+
+  function processVoiceCommand(transcript) {
+    const lower = transcript.toLowerCase();
+    voiceControlStatus.textContent = `Heard: "${transcript}"`;
+
+    if (lower.includes('guide') || lower.includes('what can i do') || lower.includes('orientation')) {
+      speak(buildVoiceGuideMessage());
+    } else if (lower.includes('help') || lower.includes('what can i say')) {
+      speak('Say start, stop, camera mode, simulation mode, recalibrate, what\'s ahead, describe what you see, louder, quieter, mute, or guide for a full orientation.');
+    } else if (lower.includes('start') || lower.includes('begin')) {
+      if (running) { speak('Already running.'); }
+      else { startBtn.click(); speak('Starting.'); }
+    } else if (lower.includes('stop')) {
+      if (!running) { speak('Already stopped.'); }
+      else { stopBtn.click(); speak('Stopping.'); }
+    } else if (lower.includes('camera')) {
+      if (mode === 'cam') { speak('Already in camera mode.'); }
+      else { modeCamBtn.click(); speak('Switching to camera mode.'); }
+    } else if (lower.includes('simulation')) {
+      if (mode === 'sim') { speak('Already in simulation mode.'); }
+      else { modeSimBtn.click(); speak('Switching to simulation mode.'); }
+    } else if (lower.includes('recalibrate') || lower.includes('calibrate')) {
+      recalibrateBtn.click();
+      speak('Recalibrating.');
+    } else if (lower.includes('mute')) {
+      volSlider.value = 0;
+      volSlider.dispatchEvent(new Event('input'));
+      speak('Muted.');
+    } else if (lower.includes('louder') || lower.includes('turn up') || lower.includes('volume up')) {
+      volSlider.value = Math.min(100, parseInt(volSlider.value) + 15);
+      volSlider.dispatchEvent(new Event('input'));
+      speak('Volume up.');
+    } else if (lower.includes('quieter') || lower.includes('quarter') || lower.includes('lower volume')
+               || lower.includes('turn down') || lower.includes('softer') || lower.includes('volume down')) {
+      volSlider.value = Math.max(0, parseInt(volSlider.value) - 15);
+      volSlider.dispatchEvent(new Event('input'));
+      speak('Volume down.');
+    } else if (lower.includes('describe') || lower.includes('what do you see') || lower.includes('look around')) {
+      if (describeSceneAvailable) requestSceneDescription();
+      else speak('Scene description isn\'t set up on this backend.');
+    } else if (lower.includes('what') && (lower.includes('ahead') || lower.includes('around') || lower.includes('status'))) {
+      announceNowBtn.click();
+    }
+    // unrecognized phrases are left silent (no spoken response) so ambient
+    // conversation picked up by the mic doesn't trigger constant chatter
+  }
+
+  if (!SpeechRecognitionAPI) {
+    voiceControlBtn.disabled = true;
+    voiceControlBtn.textContent = 'Not supported';
+    voiceControlHint.textContent = 'Voice control needs a browser with speech recognition support (Chrome or Edge).';
+  } else {
+    let recognitionSetUp = false;
+
+    function setUpRecognitionIfNeeded() {
+      if (recognitionSetUp) return true;
+      try {
+        recognition = new SpeechRecognitionAPI();
+        recognition.continuous = true;
+        recognition.interimResults = false;
+        recognition.lang = 'en-US';
+
+        recognition.onresult = (event) => {
+          const transcript = event.results[event.results.length - 1][0].transcript.trim();
+          if (transcript) processVoiceCommand(transcript);
+        };
+        recognition.onerror = (event) => {
+          if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+            voiceControlEnabled = false;
+            recognitionActive = false;
+            voiceControlBtn.textContent = 'Turn on';
+            voiceControlBtn.setAttribute('aria-pressed', 'false');
+            voiceControlStatus.textContent = 'Microphone access denied — voice control turned off.';
+          }
+          // other errors (no-speech, network hiccups, aborted) are recoverable via onend below
+        };
+        recognition.onend = () => {
+          recognitionActive = false;
+          maybeRestartRecognition(300);
+        };
+
+        recognitionSetUp = true;
+        return true;
+      } catch (e) {
+        // some browser/embedding contexts throw on construction even when the
+        // API exists (e.g. restrictive permissions-policy) — degrade gracefully
+        recognition = null;
+        voiceControlBtn.disabled = true;
+        voiceControlBtn.textContent = 'Not supported';
+        voiceControlHint.textContent = 'Voice control isn\'t available in this browser context.';
+        return false;
+      }
+    }
+
+    voiceControlBtn.addEventListener('click', () => {
+      if (!setUpRecognitionIfNeeded()) return; // construction failed — button is now disabled anyway
+
+      voiceControlEnabled = !voiceControlEnabled;
+      if (voiceControlEnabled) {
+        voiceControlBtn.textContent = 'Turn off';
+        voiceControlBtn.setAttribute('aria-pressed', 'true');
+        voiceControlStatus.textContent = 'Listening…';
+        try { recognition.start(); recognitionActive = true; } catch (e) {}
+        speak('Voice control on. Say help to hear the commands.');
+      } else {
+        voiceControlBtn.textContent = 'Turn on';
+        voiceControlBtn.setAttribute('aria-pressed', 'false');
+        voiceControlStatus.textContent = '';
+        try { recognition.stop(); } catch (e) {}
+        recognitionActive = false;
+      }
+    });
+  }
+
+  // ---------- CAMERA SENSING: local heuristic fallback ----------
+  let localCamBaseline = null;       // per-zone learned "normal" edge level
+  let localCalibFrameCount = 0;
+  const LOCAL_CALIB_FRAMES = 20;
+
+  function senseZonesCameraLocal() {
+    const w = procCanvas.width, h = procCanvas.height;
+    if (!camVideo.videoWidth) return new Array(NUM_ZONES).fill(null);
+    procCtx.drawImage(camVideo, 0, 0, w, h);
+    const frame = procCtx.getImageData(0, 0, w, h).data;
+
+    const colsPerZone = Math.floor(w / NUM_ZONES);
+    const rawEdge = new Array(NUM_ZONES).fill(0);
+    const rawBright = new Array(NUM_ZONES).fill(0);
+
+    for (let zi = 0; zi < NUM_ZONES; zi++) {
+      let edgeSum = 0, count = 0, brightSum = 0;
+      const xStart = zi * colsPerZone;
+      const xEnd = Math.min(w, xStart + colsPerZone);
+      for (let y = 1; y < h - 1; y++) {
+        for (let x = xStart + 1; x < xEnd - 1; x++) {
+          const i = (y * w + x) * 4;
+          const iL = (y * w + (x - 1)) * 4;
+          const iU = ((y - 1) * w + x) * 4;
+          const lum = (frame[i] + frame[i + 1] + frame[i + 2]) / 3;
+          const lumL = (frame[iL] + frame[iL + 1] + frame[iL + 2]) / 3;
+          const lumU = (frame[iU] + frame[iU + 1] + frame[iU + 2]) / 3;
+          edgeSum += Math.abs(lum - lumL) + Math.abs(lum - lumU);
+          brightSum += lum;
+          count++;
+        }
+      }
+      rawEdge[zi] = edgeSum / count;
+      rawBright[zi] = brightSum / count;
+    }
+
+    // calibration: learn the normal per-zone edge level before flagging anything
+    if (!localCamBaseline) {
+      localCamBaseline = rawEdge.slice();
+      localCalibFrameCount = 0;
+    }
+    if (localCalibFrameCount < LOCAL_CALIB_FRAMES) {
+      for (let zi = 0; zi < NUM_ZONES; zi++) {
+        localCamBaseline[zi] = (localCamBaseline[zi] * localCalibFrameCount + rawEdge[zi]) / (localCalibFrameCount + 1);
+      }
+      localCalibFrameCount++;
+      return new Array(NUM_ZONES).fill(null); // stay silent while calibrating
+    }
+
+    const results = new Array(NUM_ZONES).fill(null);
+    // sensitivity 0..1 -> required rise above baseline, easier to trigger at higher sensitivity
+    const deltaThreshold = 14 - CAM_SENSITIVITY * 10; // range ~14 (low sens) .. 4 (high sens)
+
+    for (let zi = 0; zi < NUM_ZONES; zi++) {
+      const delta = rawEdge[zi] - localCamBaseline[zi];
+      if (delta < deltaThreshold) continue;
+      const closeness = Math.min(1, delta / 35);
+      const dist = (1 - closeness) * MAX_RANGE;
+      const height = rawBright[zi] > 140 ? 'head' : (rawBright[zi] > 70 ? 'mid' : 'ground');
+      results[zi] = { dist: Math.max(0.3, dist), height, angle: 0 };
+    }
+    return results;
+  }
+
+  function senseZonesCamera() {
+    if (backendConnected && latestBackendZones) {
+      return latestBackendZones;
+    }
+    return senseZonesCameraLocal();
+  }
+
+  // ---------- MOVEMENT ----------
+  function updateMovement(dt) {
+    const turnSpeed = 1.8; // rad/s
+    const moveSpeed = 2.2; // m/s
+    if (keys['left']) player.facing -= turnSpeed * dt;
+    if (keys['right']) player.facing += turnSpeed * dt;
+    let move = 0;
+    if (keys['fwd']) move += 1;
+    if (keys['back']) move -= 1;
+    if (move !== 0) {
+      const nx = player.x + Math.sin(player.facing) * move * moveSpeed * dt;
+      const nz = player.z + Math.cos(player.facing) * move * moveSpeed * dt;
+      player.x = Math.max(-WORLD_SIZE / 2, Math.min(WORLD_SIZE / 2, nx));
+      player.z = Math.max(-WORLD_SIZE / 2, Math.min(WORLD_SIZE / 2, nz));
+    }
+
+    // update listener
+    if (audioCtx && audioCtx.listener.forwardX) {
+      audioCtx.listener.positionX.setTargetAtTime(player.x, audioCtx.currentTime, 0.01);
+      audioCtx.listener.positionZ.setTargetAtTime(player.z, audioCtx.currentTime, 0.01);
+      audioCtx.listener.forwardX.setTargetAtTime(Math.sin(player.facing), audioCtx.currentTime, 0.01);
+      audioCtx.listener.forwardZ.setTargetAtTime(Math.cos(player.facing), audioCtx.currentTime, 0.01);
+    }
+  }
+
+  // ---------- MAIN LOOP ----------
+  function frame(t) {
+    if (!running) return;
+    const dt = Math.min(0.05, (t - lastFrameT) / 1000 || 0);
+    lastFrameT = t;
+
+    if (mode === 'sim') updateMovement(dt);
+
+    const results = mode === 'sim' ? senseZonesSimulation() : senseZonesCamera();
+    zoneDistances = results;
+
+    const halfFov = (FOV_DEG * Math.PI / 180) / 2;
+    const zoneWidth = (FOV_DEG * Math.PI / 180) / NUM_ZONES;
+
+    const useObjectVoices = mode === 'cam' && objectVoicesEnabled && backendConnected && !backendCalibrating;
+
+    if (useObjectVoices) {
+      // per-object tracked audio takes over — silence the fixed zones so
+      // there's no confusing double-sound for the same obstacle
+      zoneChains.forEach(chain => silenceZone(chain));
+      updateObjectVoices(latestBoxes);
+    } else {
+      teardownObjectVoicesIfIdle();
+      results.forEach((res, i) => {
+        const chain = zoneChains[i];
+        if (!chain) return;
+        if (res) {
+          // position panner relative to listener, in front hemisphere
+          const zoneCenterAngle = -halfFov + zoneWidth * (i + 0.5);
+          const angle = mode === 'sim' ? (player.facing + zoneCenterAngle) : zoneCenterAngle;
+          const dist = Math.max(0.4, res.dist);
+          const px = player.x + Math.sin(angle) * dist;
+          const pz = player.z + Math.cos(angle) * dist;
+          const py = res.height === 'ground' ? -0.6 : (res.height === 'head' ? 0.6 : 0);
+          chain.panner.positionX.setTargetAtTime(px, audioCtx.currentTime, 0.01);
+          chain.panner.positionY.setTargetAtTime(py, audioCtx.currentTime, 0.01);
+          chain.panner.positionZ.setTargetAtTime(pz, audioCtx.currentTime, 0.01);
+          pulseZone(chain, res.dist, heightToFreq(res.height));
+        } else {
+          silenceZone(chain);
+        }
+      });
+    }
+
+    if (mode === 'sim') {
+      drawSonar(results);
+    } else {
+      const boxesToDraw = (backendConnected && !backendCalibrating) ? latestBoxes : fallbackBoxesFromZones(results);
+      drawBoxOverlay(boxesToDraw);
+      checkUrgentApproach(boxesToDraw);
+    }
+    updateReadout(results);
+
+    rafId = requestAnimationFrame(frame);
+  }
+
+  // ---------- FAST-APPROACH URGENCY (time-to-collision) ----------
+  // Zone-based severity only looks at current distance. Tracked boxes
+  // additionally carry closing velocity + estimated time-to-collision,
+  // so something moving fast can be flagged urgent well before it's
+  // simply "close" by distance alone.
+  let lastUrgentAnnounceTime = 0;
+  const URGENT_REANNOUNCE_MS = 2000; // shorter cooldown than normal close-range voice — this is more time-critical
+
+  function checkUrgentApproach(boxes) {
+    const urgent = boxes.find(b => typeof b.ttc_seconds === 'number' && b.ttc_seconds < 2.5);
+    if (!urgent) return;
+
+    if (hapticEnabled && 'vibrate' in navigator) {
+      navigator.vibrate([80, 40, 80, 40, 80, 40, 80]); // faster, sharper pattern than a normal close-range buzz
+    }
+    if (voiceEnabled) {
+      const now = performance.now();
+      if (now - lastUrgentAnnounceTime > URGENT_REANNOUNCE_MS) {
+        const subject = urgent.label ? `Fast approaching ${urgent.label}` : 'Fast approaching obstacle';
+        speak(`${subject}, ${urgent.dist.toFixed(1)} meters, contact in about ${urgent.ttc_seconds.toFixed(1)} seconds.`);
+        lastUrgentAnnounceTime = now;
+      }
+    }
+  }
+
+  // ---------- SEVERITY / CAMERA OVERLAY ----------
+  function classifySeverity(dist) {
+    if (dist < MAX_RANGE * 0.33) return 'close';
+    if (dist < MAX_RANGE * 0.66) return 'medium';
+    return 'safe';
+  }
+  const SEVERITY_COLOR = { close: '#ff5c5c', medium: '#ffb020', safe: '#3ee888' };
+
+  // Local-heuristic fallback has no real bounding boxes, so approximate
+  // one full-height box per active zone — coarser, but keeps the same
+  // red/yellow/green visual language working without the backend.
+  function fallbackBoxesFromZones(results) {
+    const boxes = [];
+    const zoneW = 1 / NUM_ZONES;
+    results.forEach((res, i) => {
+      if (!res) return;
+      boxes.push({
+        x: i * zoneW, y: 0.08, w: zoneW, h: 0.84,
+        dist: res.dist, height: res.height, severity: classifySeverity(res.dist)
+      });
+    });
+    return boxes;
+  }
+
+  function drawBoxOverlay(boxes) {
+    const W = boxOverlayCanvas.width, H = boxOverlayCanvas.height;
+    boxCtx.clearRect(0, 0, W, H);
+    boxes.forEach(b => {
+      const color = SEVERITY_COLOR[b.severity] || SEVERITY_COLOR.safe;
+      const x = b.x * W, y = b.y * H, w = b.w * W, h = b.h * H;
+      const urgent = typeof b.ttc_seconds === 'number' && b.ttc_seconds < 2.5;
+
+      boxCtx.strokeStyle = color;
+      boxCtx.lineWidth = urgent ? 4 : 3;
+      boxCtx.fillStyle = hexToRgba(color, urgent ? 0.22 : 0.14);
+      boxCtx.fillRect(x, y, w, h);
+      boxCtx.strokeRect(x, y, w, h);
+
+      let label = `${b.dist.toFixed(1)}m`;
+      if (b.label) {
+        label = `${b.label} · ${label}`;
+      }
+      if (typeof b.velocity_mps === 'number' && b.velocity_mps > 0.15) {
+        label += ` ↓${b.velocity_mps.toFixed(1)}m/s`;
+      }
+      if (urgent) {
+        label = b.label ? `⚠ ${b.label} — ${b.ttc_seconds.toFixed(1)}s TO CONTACT` : `⚠ ${b.ttc_seconds.toFixed(1)}s TO CONTACT`;
+      }
+      boxCtx.font = 'bold 12px ui-monospace, monospace';
+      const labelW = boxCtx.measureText(label).width + 8;
+      const labelY = y > 16 ? y - 16 : y + 2;
+      boxCtx.fillStyle = color;
+      boxCtx.fillRect(x, labelY, labelW, 15);
+      boxCtx.fillStyle = '#04100a';
+      boxCtx.fillText(label, x + 4, labelY + 11);
+    });
+    camBadge.textContent = boxes.length === 1 ? '1 object detected' : `${boxes.length} objects detected`;
+  }
+
+  function hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  // ---------- RENDER ----------
+  function drawSonar(results) {
+    const W = sonarCanvas.width, H = sonarCanvas.height;
+    sctx.clearRect(0, 0, W, H);
+    sctx.fillStyle = '#070b0a';
+    sctx.fillRect(0, 0, W, H);
+
+    const cx = W / 2, cy = H - 30;
+    const maxR = H - 70;
+
+    // range rings
+    sctx.strokeStyle = 'rgba(62,232,136,0.12)';
+    sctx.lineWidth = 1;
+    for (let r = 1; r <= 4; r++) {
+      sctx.beginPath();
+      sctx.arc(cx, cy, (maxR / 4) * r, Math.PI, 2 * Math.PI);
+      sctx.stroke();
+    }
+    // range labels
+    sctx.fillStyle = 'rgba(125,150,139,0.7)';
+    sctx.font = '11px ui-monospace, monospace';
+    for (let r = 1; r <= 4; r++) {
+      const val = (MAX_RANGE / 4) * r;
+      sctx.fillText(val.toFixed(0) + 'm', cx + 4, cy - (maxR / 4) * r + 4);
+    }
+
+    // FOV wedge
+    const halfFov = (FOV_DEG * Math.PI / 180) / 2;
+    sctx.strokeStyle = 'rgba(94,200,216,0.5)';
+    sctx.beginPath();
+    sctx.moveTo(cx, cy);
+    sctx.lineTo(cx + Math.sin(-halfFov) * maxR, cy - Math.cos(-halfFov) * maxR);
+    sctx.moveTo(cx, cy);
+    sctx.lineTo(cx + Math.sin(halfFov) * maxR, cy - Math.cos(halfFov) * maxR);
+    sctx.stroke();
+
+    // player marker
+    sctx.fillStyle = '#5ec8d8';
+    sctx.beginPath();
+    sctx.arc(cx, cy, 6, 0, Math.PI * 2);
+    sctx.fill();
+
+    // obstacles as blips at their zone
+    const zoneWidth = (FOV_DEG * Math.PI / 180) / NUM_ZONES;
+    results.forEach((res, i) => {
+      if (!res) return;
+      const angle = -halfFov + zoneWidth * (i + 0.5);
+      const r = (res.dist / MAX_RANGE) * maxR;
+      const bx = cx + Math.sin(angle) * r;
+      const by = cy - Math.cos(angle) * r;
+      const t = res.dist / MAX_RANGE;
+      let color = t < 0.33 ? '#ff5c5c' : (t < 0.66 ? '#ffb020' : '#3ee888');
+      const size = res.height === 'head' ? 9 : (res.height === 'ground' ? 5 : 7);
+
+      // Soft glow via a couple of cheap plain-fill rings instead of
+      // ctx.shadowBlur — shadowBlur is notoriously expensive on systems
+      // without solid GPU-accelerated canvas support and can stall
+      // rendering badly when redrawn every frame. This looks close to
+      // identical but costs a fraction as much.
+      sctx.fillStyle = hexToRgba(color, 0.18);
+      sctx.beginPath();
+      sctx.arc(bx, by, size * 2, 0, Math.PI * 2);
+      sctx.fill();
+
+      sctx.beginPath();
+      sctx.arc(bx, by, size, 0, Math.PI * 2);
+      sctx.fillStyle = color;
+      sctx.fill();
+    });
+
+    // zone divider lines (subtle)
+    sctx.strokeStyle = 'rgba(28,40,37,0.8)';
+    for (let i = 1; i < NUM_ZONES; i++) {
+      const angle = -halfFov + zoneWidth * i;
+      sctx.beginPath();
+      sctx.moveTo(cx, cy);
+      sctx.lineTo(cx + Math.sin(angle) * maxR, cy - Math.cos(angle) * maxR);
+      sctx.stroke();
+    }
+  }
+
+  // ---------- SHARED: zone direction / nearest lookup ----------
+  // Works for both simulation and camera zones, since zone array index
+  // always corresponds to left-to-right position regardless of mode —
+  // this avoids relying on the per-result 'angle' field, which camera
+  // mode doesn't reliably populate.
+  function zoneCenterAngleFor(index) {
+    const halfFov = (FOV_DEG * Math.PI / 180) / 2;
+    const zoneWidth = (FOV_DEG * Math.PI / 180) / NUM_ZONES;
+    return -halfFov + zoneWidth * (index + 0.5);
+  }
+  function directionLabel(angle) {
+    if (Math.abs(angle) < 0.12) return 'ahead';
+    return angle < 0 ? 'ahead-left' : 'ahead-right';
+  }
+  function findNearestZone(results) {
+    let nearest = null, nearestIndex = -1;
+    results.forEach((res, i) => {
+      if (res && (!nearest || res.dist < nearest.dist)) { nearest = res; nearestIndex = i; }
+    });
+    if (!nearest) return null;
+    return { ...nearest, index: nearestIndex, direction: directionLabel(zoneCenterAngleFor(nearestIndex)) };
+  }
+
+  function updateReadout(results) {
+    const nearest = findNearestZone(results);
+    if (!nearest) {
+      readout.innerHTML = `<span><b>Path clear</b> — no obstacles within ${MAX_RANGE}m</span>`;
+    } else {
+      const cls = nearest.dist < MAX_RANGE * 0.33 ? 'warn' : '';
+      readout.innerHTML = `<span>Nearest: <b class="${cls}">${nearest.dist.toFixed(1)}m ${nearest.direction}</b></span>
+        <span>Height: <b>${nearest.height}</b></span>
+        <span>Zones active: <b>${results.filter(r => r).length}/${NUM_ZONES}</b></span>`;
+    }
+
+    const now = performance.now();
+    if (nearest && now - lastAnnounce > 2200) {
+      lastAnnounce = now;
+      srAnnounce.textContent = `Nearest obstacle ${nearest.dist.toFixed(1)} meters, ${nearest.direction}, ${nearest.height} height.`;
+    }
+
+    handleVoiceAndLog(nearest);
+  }
+
+  // ---------- VOICE ANNOUNCEMENTS + ALERT LOG ----------
+  let voiceEnabled = false;
+  let hapticEnabled = false;
+  let lastVoiceBucket = 'clear';   // 'clear' | 'safe' | 'medium' | 'close'
+  let lastCloseAnnounceTime = 0;
+  const CLOSE_REANNOUNCE_MS = 4000;
+  let alertLog = []; // { t: Date.now(), dist, height, direction, severity }
+  const MAX_LOG_ENTRIES = 25;
+
+  // Voice COMMAND control (separate from voice announcements above) needs
+  // the mic listening continuously — speak() below pauses it while
+  // talking and resumes after, so the recognizer doesn't hear its own
+  // announcements/confirmations and mistake them for a new command.
+  let recognition = null;
+  let recognitionActive = false;
+  let voiceControlEnabled = false;
+
+  function maybeRestartRecognition(delay = 250) {
+    if (!voiceControlEnabled || !recognition) return;
+    setTimeout(() => {
+      if (voiceControlEnabled && !recognitionActive && !window.speechSynthesis.speaking) {
+        try { recognition.start(); recognitionActive = true; } catch (e) {}
+      }
+    }, delay);
+  }
+
+  let isSpeaking = false;
+
+  function updateVoiceGuideBtnLabel() {
+    voiceGuideBtn.innerHTML = isSpeaking
+      ? '<span aria-hidden="true" class="eq-icon"><span></span><span></span><span></span></span> Stop speaking'
+      : '<span aria-hidden="true">🔊</span> What can I do here? (Voice guide)';
+  }
+
+  function speak(text) {
+    if (!('speechSynthesis' in window)) return;
+    if (recognitionActive) {
+      try { recognition.stop(); } catch (e) {}
+    }
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.rate = 1.05;
+    utter.pitch = 1.0;
+    utter.onstart = () => { isSpeaking = true; updateVoiceGuideBtnLabel(); };
+    utter.onend = () => { isSpeaking = false; updateVoiceGuideBtnLabel(); maybeRestartRecognition(); };
+    utter.onerror = () => { isSpeaking = false; updateVoiceGuideBtnLabel(); maybeRestartRecognition(); };
+    window.speechSynthesis.speak(utter);
+  }
+
+  function findNearestBox(boxes) {
+    let nearest = null;
+    boxes.forEach(b => { if (!nearest || b.dist < nearest.dist) nearest = b; });
+    return nearest;
+  }
+
+  function describeNearest(nearest, label) {
+    if (!nearest) return 'Path is clear.';
+    const heightWord = nearest.height === 'ground' ? 'ground level' : (nearest.height === 'head' ? 'head height' : 'waist height');
+    const subject = label ? label.charAt(0).toUpperCase() + label.slice(1) : 'Obstacle';
+    return `${subject} ${nearest.direction.replace('ahead-', '').replace('ahead', 'straight ahead')}, ${nearest.dist.toFixed(1)} meters, ${heightWord}.`;
+  }
+
+  function handleVoiceAndLog(nearest) {
+    const bucket = nearest ? classifySeverity(nearest.dist) : 'clear';
+
+    // when AI object identification is on, prefer the label from the
+    // nearest real detected box for voice/log — same underlying event,
+    // richer description ("chair" instead of just "obstacle")
+    const nearestBox = (mode === 'cam' && aiEnabled && latestBoxes.length) ? findNearestBox(latestBoxes) : null;
+    const label = nearestBox && nearestBox.label ? nearestBox.label : null;
+
+    // --- alert log: edge-triggered on entering 'close' ---
+    if (bucket === 'close' && lastVoiceBucket !== 'close') {
+      alertLog.unshift({
+        t: Date.now(),
+        dist: nearest.dist,
+        height: nearest.height,
+        direction: nearest.direction,
+        severity: 'close',
+        label: label
+      });
+      if (alertLog.length > MAX_LOG_ENTRIES) alertLog.length = MAX_LOG_ENTRIES;
+      renderLog();
+    }
+
+    // --- voice: speak on entering 'close' (rate-limited) or returning to 'clear' ---
+    if (voiceEnabled) {
+      const now = performance.now();
+      if (bucket === 'close' && now - lastCloseAnnounceTime > CLOSE_REANNOUNCE_MS) {
+        speak(describeNearest(nearest, label));
+        lastCloseAnnounceTime = now;
+      } else if (bucket === 'clear' && lastVoiceBucket !== 'clear') {
+        speak('Path clear.');
+      }
+    }
+
+    // --- haptic: short buzz entering 'close', lighter tap entering 'medium' ---
+    if (hapticEnabled && 'vibrate' in navigator) {
+      if (bucket === 'close' && lastVoiceBucket !== 'close') {
+        navigator.vibrate([120, 60, 120, 60, 120]);
+      } else if (bucket === 'medium' && lastVoiceBucket !== 'medium' && lastVoiceBucket !== 'close') {
+        navigator.vibrate(80);
+      }
+    }
+
+    lastVoiceBucket = bucket;
+  }
+
+  function relativeTimeLabel(t) {
+    const secs = Math.round((Date.now() - t) / 1000);
+    if (secs < 2) return 'just now';
+    if (secs < 60) return `${secs}s ago`;
+    const mins = Math.round(secs / 60);
+    return `${mins}m ago`;
+  }
+
+  function renderLog() {
+    if (alertLog.length === 0) {
+      logList.innerHTML = `<span style="color:var(--text-dim);opacity:0.6;">No events yet — alerts appear here when something gets close.</span>`;
+      return;
+    }
+    logList.innerHTML = alertLog.map(e => `
+      <div class="log-entry">
+        <span>${e.label ? e.label.charAt(0).toUpperCase() + e.label.slice(1) + ' — ' : ''}${e.dist.toFixed(1)}m ${e.direction}, ${e.height}</span>
+        <span class="log-time">${relativeTimeLabel(e.t)}</span>
+      </div>
+    `).join('');
+  }
+
+  // ---------- CONTROLS WIRING ----------
+  function setKey(name, val) { keys[name] = val; }
+
+  window.addEventListener('keydown', (e) => {
+    if (['ArrowUp', 'w', 'W'].includes(e.key)) setKey('fwd', true);
+    if (['ArrowDown', 's', 'S'].includes(e.key)) setKey('back', true);
+    if (['ArrowLeft', 'a', 'A'].includes(e.key)) setKey('left', true);
+    if (['ArrowRight', 'd', 'D'].includes(e.key)) setKey('right', true);
+  });
+  window.addEventListener('keyup', (e) => {
+    if (['ArrowUp', 'w', 'W'].includes(e.key)) setKey('fwd', false);
+    if (['ArrowDown', 's', 'S'].includes(e.key)) setKey('back', false);
+    if (['ArrowLeft', 'a', 'A'].includes(e.key)) setKey('left', false);
+    if (['ArrowRight', 'd', 'D'].includes(e.key)) setKey('right', false);
+  });
+
+  function wirePadButton(id, key) {
+    const btn = document.getElementById(id);
+    ['mousedown', 'touchstart'].forEach(ev => btn.addEventListener(ev, (e) => { e.preventDefault(); setKey(key, true); }));
+    ['mouseup', 'mouseleave', 'touchend'].forEach(ev => btn.addEventListener(ev, () => setKey(key, false)));
+  }
+  wirePadButton('padFwd', 'fwd');
+  wirePadButton('padBack', 'back');
+  wirePadButton('padLeft', 'left');
+  wirePadButton('padRight', 'right');
+
+  densitySlider.addEventListener('input', () => {
+    OBSTACLE_COUNT = parseInt(densitySlider.value);
+    densityVal.textContent = OBSTACLE_COUNT;
+    if (running && mode === 'sim') generateObstacles();
+  });
+  rangeSlider.addEventListener('input', () => {
+    MAX_RANGE = parseInt(rangeSlider.value);
+    rangeVal.textContent = MAX_RANGE + ' m';
+    zoneChains.forEach(z => { if (z.panner) z.panner.maxDistance = MAX_RANGE + 2; });
+    sendBackendConfig();
+  });
+  volSlider.addEventListener('input', () => {
+    masterVol = parseInt(volSlider.value) / 100;
+    volVal.textContent = volSlider.value + '%';
+    if (masterGain) masterGain.gain.setTargetAtTime(masterVol, audioCtx.currentTime, 0.02);
+  });
+  zonesSlider.addEventListener('input', () => {
+    NUM_ZONES = parseInt(zonesSlider.value);
+    zonesVal.textContent = NUM_ZONES;
+    if (running) {
+      teardownZonesOnly();
+      buildZoneChains();
+    }
+    sendBackendConfig();
+  });
+
+  aiToggle.addEventListener('change', () => {
+    aiEnabled = aiToggle.checked;
+    sendBackendConfig();
+  });
+
+  function teardownZonesOnly() {
+    zoneChains.forEach(z => { try { z.osc.stop(); } catch (e) {} });
+    zoneChains = [];
+  }
+  function makeAudioChain(waveType = 'sine') {
+    const osc = audioCtx.createOscillator();
+    osc.type = waveType;
+    osc.frequency.value = 440;
+    const gain = audioCtx.createGain();
+    gain.gain.value = 0;
+    const panner = audioCtx.createPanner();
+    panner.panningModel = 'HRTF';
+    panner.distanceModel = 'inverse';
+    panner.refDistance = 1;
+    panner.maxDistance = MAX_RANGE + 2;
+    panner.rolloffFactor = 1;
+    osc.connect(gain).connect(panner).connect(masterGain);
+    osc.start();
+    return { osc, gain, panner, nextPulseTime: 0 };
+  }
+  function buildZoneChains() {
+    for (let i = 0; i < NUM_ZONES; i++) {
+      zoneChains.push(makeAudioChain());
+    }
+  }
+
+  // ---------- OBJECT VOICES: one persistent, moving, Doppler-shifted tone per tracked object ----------
+  // Unlike the fixed left-to-right zones (coarse, always-on coverage),
+  // this gives each individually tracked object (see ObjectTracker in
+  // the backend) its own audio identity that follows its real tracked
+  // position continuously, and pitch-shifts based on how fast it's
+  // closing the distance — a stylized Doppler cue, not physically exact
+  // acoustics, but an intuitive "this one's coming in hot" signal.
+  function dopplerFactor(velocityMps) {
+    const v = Math.max(-6, Math.min(6, velocityMps || 0));
+    return 1 + v * 0.035; // ~±21% pitch shift at the clamp extremes
+  }
+
+  function updateObjectVoices(boxes) {
+    const seenIds = new Set();
+    boxes.forEach(b => {
+      if (b.track_id == null) return;
+      seenIds.add(b.track_id);
+
+      let voice = objectVoices.get(b.track_id);
+      if (!voice) {
+        voice = makeAudioChain('triangle'); // distinct timbre from the plain zone sine tones
+        voice.missed = 0;
+        objectVoices.set(b.track_id, voice);
+      }
+      voice.missed = 0;
+
+      const centerX = b.x + b.w / 2; // 0..1 across the frame
+      const angle = (centerX - 0.5) * (FOV_DEG * Math.PI / 180);
+      const dist = Math.max(0.4, b.dist);
+      const px = player.x + Math.sin(angle) * dist;
+      const pz = player.z + Math.cos(angle) * dist;
+      const py = b.height === 'ground' ? -0.6 : (b.height === 'head' ? 0.6 : 0);
+      voice.panner.positionX.setTargetAtTime(px, audioCtx.currentTime, 0.01);
+      voice.panner.positionY.setTargetAtTime(py, audioCtx.currentTime, 0.01);
+      voice.panner.positionZ.setTargetAtTime(pz, audioCtx.currentTime, 0.01);
+
+      const baseFreq = heightToFreq(b.height);
+      const freq = baseFreq * dopplerFactor(b.velocity_mps);
+      pulseZone(voice, b.dist, freq);
+    });
+
+    // fade out and eventually free voices for objects no longer tracked
+    objectVoices.forEach((voice, id) => {
+      if (!seenIds.has(id)) {
+        voice.missed = (voice.missed || 0) + 1;
+        silenceZone(voice);
+        if (voice.missed > 20) {
+          try { voice.osc.stop(); } catch (e) {}
+          objectVoices.delete(id);
+        }
+      }
+    });
+  }
+
+  function teardownObjectVoicesIfIdle() {
+    if (objectVoices.size === 0) return;
+    objectVoices.forEach(v => { try { v.osc.stop(); } catch (e) {} });
+    objectVoices.clear();
+  }
+
+  regenBtn.addEventListener('click', () => {
+    if (mode === 'sim') generateObstacles();
+  });
+
+  async function setMode(newMode) {
+    if (newMode === mode) return;
+    mode = newMode;
+    modeSimBtn.classList.toggle('active', mode === 'sim');
+    modeSimBtn.setAttribute('aria-selected', mode === 'sim');
+    modeCamBtn.classList.toggle('active', mode === 'cam');
+    modeCamBtn.setAttribute('aria-selected', mode === 'cam');
+    camNotePanel.style.display = mode === 'cam' ? 'block' : 'none';
+    sonarCanvas.style.display = mode === 'sim' ? 'block' : 'none';
+    camViewWrap.style.display = mode === 'cam' ? 'block' : 'none';
+
+    if (mode === 'cam') {
+      stopSimKeysHint();
+      localCamBaseline = null;
+      localCalibFrameCount = 0;
+      try {
+        await startCamera();
+        connectBackend();
+      } catch (err) {
+        readout.innerHTML = `<span class="warn">Camera unavailable: ${err.message}. Switch back to Simulation.</span>`;
+        mode = 'sim';
+        modeSimBtn.classList.add('active');
+        modeCamBtn.classList.remove('active');
+        camNotePanel.style.display = 'none';
+        sonarCanvas.style.display = 'block';
+        camViewWrap.style.display = 'none';
+      }
+    } else {
+      stopCamera();
+      disconnectBackend();
+    }
+  }
+  function stopSimKeysHint() {}
+
+  // initial idle draw
+  (function idleDraw() {
+    const W = sonarCanvas.width, H = sonarCanvas.height;
+    sctx.fillStyle = '#070b0a';
+    sctx.fillRect(0, 0, W, H);
+    sctx.strokeStyle = 'rgba(62,232,136,0.15)';
+    sctx.beginPath();
+    sctx.arc(W / 2, H - 30, H - 70, Math.PI, 2 * Math.PI);
+    sctx.stroke();
+  })();
+
+  // Default backend URL: same host the page was loaded from, correct
+  // scheme (ws/wss) to match http/https. Works whether this page is
+  // opened via localhost, a LAN IP, or an https:// tunnel (e.g. ngrok) —
+  // falls back to localhost:8000 if opened directly from disk (file://).
+  (function setDefaultBackendUrl() {
+    let url;
+    if (location.protocol === 'file:' || !location.host) {
+      url = 'ws://localhost:8000/ws/obstacles';
+    } else {
+      const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+      url = `${scheme}://${location.host}/ws/obstacles`;
+    }
+    backendUrlInput.value = url;
+  })();
+})();
+</script>
+</body>
+</html>

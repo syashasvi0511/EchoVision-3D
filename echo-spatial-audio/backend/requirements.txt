@@ -1,0 +1,15 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+opencv-python-headless==4.10.0.84
+numpy==1.26.4
+
+# Optional — only needed if you set NGROK_AUTHTOKEN in app.py to have
+# the server open a public tunnel itself on startup. Safe to leave
+# installed even if you don't use it; the server checks and skips
+# ngrok entirely when NGROK_AUTHTOKEN is blank.
+pyngrok==8.1.2
+
+# Optional — only needed if you set GROQ_API_KEY in app.py (or the
+# GROQ_API_KEY environment variable) to enable on-demand natural-
+# language scene descriptions. Safe to leave installed even if unused.
+groq==1.6.0
