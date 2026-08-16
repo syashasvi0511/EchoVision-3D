@@ -36,10 +36,12 @@ We benchmarked EchoVision 3D to ensure it meets real-time assistive hardware dem
 
 🚀 **How to Run**
 
-1. **Prerequisites:** Python 3.10+ installed on your system along with a webcam or video input device.
+1. **Prerequisites:** Python 3.12 installed on your system along with a webcam or video input device.
 2. **API Keys:** Obtain a free API key from [Groq Cloud](https://console.groq.com/) for Tier 3 AI scene narration.
-3. **Clone & Install Dependencies:**
+3. Download the folder.
+4. Run these commands in your terminal:
    ```bash
-   git clone [https://github.com/your-username/EchoVision3D.git](https://github.com/your-username/EchoVision3D.git)
-   cd EchoVision3D
+   cd backend
    pip install -r requirements.txt
+   pip install ultralytics
+   py -m uvicorn app:app --host 0.0.0.0 --port 8000 --reload
