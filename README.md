@@ -45,3 +45,4 @@ We benchmarked EchoVision 3D to ensure it meets real-time assistive hardware dem
    pip install -r requirements.txt
    pip install ultralytics
    py -m uvicorn app:app --host 0.0.0.0 --port 8000 --reload
+5. Open http://localhost:8000/ on any web browser (U can use ngrok to run it on mobile but it is still experimental)
